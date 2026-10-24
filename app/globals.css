@@ -1,4 +1,4 @@
-﻿@import "tailwindcss";
+@import "tailwindcss";
 
 @theme inline {
   --font-sans: var(--font-space-grotesk), "Space Grotesk", var(--font-noto-sans-sc), "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -17,15 +17,20 @@
   --border-subtle: #1D1D1D;
 }
 
-/* Default visual scale ≈ browser zoom 125% (site-wide) */
+/* Desktop visual scale ~ browser zoom 125%; mobile stays 100% natural responsive layout */
 html {
-  zoom: 1.25;
   overflow-x: hidden;
 }
 
-@supports not (zoom: 1) {
+@media (min-width: 768px) {
   html {
-    font-size: 125%;
+    zoom: 1.25;
+  }
+
+  @supports not (zoom: 1) {
+    html {
+      font-size: 125%;
+    }
   }
 }
 
