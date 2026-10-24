@@ -1,0 +1,14 @@
+{
+  "name": "platform-ledger-tooling",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "deploy": "hardhat run scripts/deploy.js",
+    "deploy:bsc": "hardhat run scripts/deploy.js --network bsc"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.22.0"
+  }
+}

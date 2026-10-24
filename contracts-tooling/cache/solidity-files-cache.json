@@ -1,0 +1,42 @@
+{
+  "_format": "hh-sol-cache-2",
+  "files": {
+    "C:\\Users\\atao\\Desktop\\zwhnb\\modern-design-tool-template\\contracts\\PlatformLedger.sol": {
+      "lastModificationDate": 1792767360836,
+      "contentHash": "d4c0c9bbf824de97dc7ad05788299192",
+      "sourceName": "contracts/PlatformLedger.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "IERC20",
+        "PlatformLedger"
+      ]
+    }
+  }
+}

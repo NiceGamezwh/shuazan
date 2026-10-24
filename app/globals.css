@@ -1,0 +1,208 @@
+﻿@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-space-grotesk), "Space Grotesk", var(--font-noto-sans-sc), "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: var(--font-ibm-plex-mono), "IBM Plex Mono", var(--font-noto-sans-sc), "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+:root {
+  --yellow: #FFD600;
+  --orange: #FF6B35;
+  --bg-primary: #0A0A0A;
+  --text-light: #F5F5F0;
+  --text-gray: #888888;
+  --text-muted: #555555;
+  --text-dim: #444444;
+  --border-dark: #2D2D2D;
+  --border-subtle: #1D1D1D;
+}
+
+/* Default visual scale ≈ browser zoom 125% (site-wide) */
+html {
+  zoom: 1.25;
+  overflow-x: hidden;
+}
+
+@supports not (zoom: 1) {
+  html {
+    font-size: 125%;
+  }
+}
+
+body {
+  overflow-x: clip;
+  min-height: 100%;
+}
+
+
+@utility font-grotesk {
+  font-family: var(--font-space-grotesk), "Space Grotesk", var(--font-noto-sans-sc), "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+@utility font-ibm-mono {
+  font-family: var(--font-ibm-plex-mono), "IBM Plex Mono", var(--font-noto-sans-sc), "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+/* —— Motion (150–300ms, reduced-motion safe) —— */
+@keyframes nb-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes nb-pulse-soft {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(255, 214, 0, 0); }
+  50% { opacity: 0.92; box-shadow: 0 0 10px 0 rgba(255, 214, 0, 0.35); }
+}
+@keyframes nb-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@keyframes nb-balance-flash {
+  0% { color: #fff06a; text-shadow: 0 0 12px rgba(255, 214, 0, 0.55); }
+  100% { color: #ffd600; text-shadow: none; }
+}
+
+.nb-filter-chip {
+  position: relative;
+  border: 1px solid #3a3a3a;
+  background: #141414;
+  color: #d6d6d0;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: color 180ms ease, background 180ms ease, border-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+}
+.nb-filter-chip:hover {
+  border-color: #ffd600;
+  color: #f5f5f0;
+  transform: translateY(-1px);
+}
+.nb-filter-chip.is-active {
+  border-color: #ffd600;
+  background: #ffd600;
+  color: #0a0a0a;
+  font-weight: 700;
+  box-shadow: 0 0 0 1px rgba(255, 214, 0, 0.25), 0 6px 18px rgba(255, 214, 0, 0.18);
+}
+.nb-filter-chip.is-active::after {
+  content: "";
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  bottom: -6px;
+  height: 3px;
+  border-radius: 999px;
+  background: #ffd600;
+}
+
+.nb-filter-scroll {
+  position: relative;
+}
+.nb-filter-scroll::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 36px;
+  background: linear-gradient(90deg, transparent, #0a0a0a 85%);
+}
+
+.nb-product-card {
+  transition: transform 200ms ease, background 200ms ease, box-shadow 200ms ease, outline-color 200ms ease;
+  outline: 1px solid transparent;
+}
+.nb-product-card:hover {
+  transform: translateY(-4px);
+  background: #161616;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 214, 0, 0.35);
+  z-index: 1;
+}
+
+.nb-stagger-item {
+  animation: nb-fade-up 260ms ease both;
+}
+.nb-catalog-grid {
+  animation: nb-fade-up 220ms ease both;
+}
+
+.nb-tag-pulse {
+  animation: nb-pulse-soft 2.4s ease-in-out infinite;
+}
+
+.nb-cta {
+  transition: background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+.nb-cta:hover:not(:disabled) {
+  background: #fff06a;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(255, 214, 0, 0.28);
+}
+.nb-cta:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+
+.nb-balance-flash {
+  animation: nb-balance-flash 420ms ease;
+}
+
+.nb-header-bar {
+  transition: border-color 200ms ease, background 200ms ease;
+}
+.nb-header-bar:hover {
+  border-color: #3a3210;
+}
+
+.nb-feature-card {
+  transition: transform 200ms ease, border-color 200ms ease, background 200ms ease;
+}
+.nb-feature-card:hover {
+  transform: translateY(-3px);
+  border-color: #ffd600;
+  background: #121212;
+}
+
+.nb-account-card {
+  transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+}
+.nb-account-card:hover {
+  transform: translateY(-2px);
+  border-color: #4a4010;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+
+.nb-tab-btn {
+  transition: color 160ms ease, background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+.nb-tab-btn:hover {
+  transform: translateY(-1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nb-filter-chip,
+  .nb-filter-chip:hover,
+  .nb-product-card,
+  .nb-product-card:hover,
+  .nb-cta,
+  .nb-cta:hover:not(:disabled),
+  .nb-cta:active:not(:disabled),
+  .nb-feature-card,
+  .nb-feature-card:hover,
+  .nb-account-card,
+  .nb-account-card:hover,
+  .nb-tab-btn,
+  .nb-tab-btn:hover {
+    transition: none !important;
+    transform: none !important;
+    animation: none !important;
+    box-shadow: none !important;
+  }
+  .nb-stagger-item,
+  .nb-catalog-grid,
+  .nb-tag-pulse,
+  .nb-balance-flash {
+    animation: none !important;
+  }
+  .nb-filter-chip.is-active::after {
+    bottom: -4px;
+  }
+}
