@@ -70,6 +70,8 @@ export function getZfmConfig(): ZfmConfig {
       notifyUrl = `${publicBase}/api/pay/zfm/notify`;
     }
   }
+  // 去掉 https://host//path 这类双斜杠（域名末尾带 / 再拼路径时常见）
+  notifyUrl = notifyUrl.replace(/([^:]\/)\/+/g, "$1");
 
   // 开发 + 模拟回调：无公网 URL 时用占位 notify，避免创建订单直接 500
   if (!notifyUrl && mockNotifyEnabled) {
