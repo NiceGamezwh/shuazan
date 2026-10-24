@@ -1,10 +1,13 @@
 /**
- * 支付FM（ZFM）服务端工具：签名、配置、本地订单落盘。
+ * 支付FM（ZFM）服务端工具：签名、配置、订单落盘。
  * 密钥仅服务端读取，勿 import 到客户端组件。
+ * Netlify/Serverless 根目录只读 → 用 @netlify/blobs；本机仍写 data/zfm-orders.json。
  */
 import { createHash, randomBytes } from "crypto";
 import { promises as fs } from "fs";
+import os from "os";
 import path from "path";
+import { getStore } from "@netlify/blobs";
 import { id } from "ethers";
 
 export type ZfmOrderStatus = "pending" | "paid" | "failed";
@@ -39,11 +42,32 @@ export type ZfmConfig = {
   mockNotifyEnabled: boolean;
 };
 
-const ORDERS_PATH = path.join(process.cwd(), "data", "zfm-orders.json");
+const LOCAL_ORDERS_PATH = path.join(process.cwd(), "data", "zfm-orders.json");
+const BLOB_STORE_NAME = "zfm-orders";
 
 /** 本地 mock 用占位回调（仅参与签名；真实到账靠 /api/pay/zfm/mock-notify） */
 export const ZFM_DEV_PLACEHOLDER_NOTIFY =
   "http://127.0.0.1/api/pay/zfm/notify";
+
+function isServerlessRuntime(): boolean {
+  return Boolean(
+    process.env.NETLIFY ||
+      process.env.NETLIFY_BLOBS_CONTEXT ||
+      process.env.AWS_LAMBDA_FUNCTION_NAME ||
+      process.env.LAMBDA_TASK_ROOT,
+  );
+}
+
+function ordersFilePath(): string {
+  if (isServerlessRuntime()) {
+    return path.join(os.tmpdir(), "zfm-orders.json");
+  }
+  return LOCAL_ORDERS_PATH;
+}
+
+function blobStore() {
+  return getStore({ name: BLOB_STORE_NAME, consistency: "strong" });
+}
 
 export function getZfmConfig(): ZfmConfig {
   const apiBase = (
@@ -70,10 +94,9 @@ export function getZfmConfig(): ZfmConfig {
       notifyUrl = `${publicBase}/api/pay/zfm/notify`;
     }
   }
-  // 去掉 https://host//path 这类双斜杠（域名末尾带 / 再拼路径时常见）
+  // 去掉 https://host//path 这类双斜杠
   notifyUrl = notifyUrl.replace(/([^:]\/)\/+/g, "$1");
 
-  // 开发 + 模拟回调：无公网 URL 时用占位 notify，避免创建订单直接 500
   if (!notifyUrl && mockNotifyEnabled) {
     notifyUrl = ZFM_DEV_PLACEHOLDER_NOTIFY;
   }
@@ -88,7 +111,6 @@ export function getZfmConfig(): ZfmConfig {
   };
 }
 
-/** 当前 notify 是否为本地占位（非公网真实回调） */
 export function isZfmPlaceholderNotify(notifyUrl: string): boolean {
   return (
     !notifyUrl ||
@@ -97,16 +119,10 @@ export function isZfmPlaceholderNotify(notifyUrl: string): boolean {
   );
 }
 
-/** MD5 小写 hex */
 export function md5Hex(input: string): string {
   return createHash("md5").update(input, "utf8").digest("hex");
 }
 
-/**
- * 创建订单签名：
- * md5(merchantNum + orderNo + amount + notifyUrl + secret)
- * amount 必须与请求里传的金额字符串完全一致。
- */
 export function signCreateOrder(params: {
   merchantNum: string;
   orderNo: string;
@@ -123,10 +139,6 @@ export function signCreateOrder(params: {
   return md5Hex(raw);
 }
 
-/**
- * 异步回调验签（官方文档）：
- * md5(state + merchantNum + orderNo + amount + secret)
- */
 export function signNotify(params: {
   state: string;
   merchantNum: string;
@@ -143,23 +155,16 @@ export function signNotify(params: {
   return md5Hex(raw);
 }
 
-/** 链上防重复 orderId：keccak256(utf8("zfm:" + orderNo)) */
 export function zfmLedgerOrderId(orderNo: string): string {
   return id(`zfm:${orderNo}`);
 }
 
-/** 仅字母数字，建议 ≤32 */
 export function generateOrderNo(): string {
   const ts = Date.now().toString(36);
   const rnd = randomBytes(8).toString("hex");
   return `zfm${ts}${rnd}`.slice(0, 32);
 }
 
-/**
- * 将用户输入的人民币元规范为两位小数字符串，并返回分。
- * 例如 "10" → { amountYuanStr: "10.00", amountFen: 1000 }
- * "10.5" → "10.50" / 1050；拒绝 >2 位小数。
- */
 export function parseAmountYuan(input: unknown): {
   amountYuanStr: string;
   amountFen: number;
@@ -181,19 +186,40 @@ export function parseAmountYuan(input: unknown): {
   return { amountYuanStr, amountFen };
 }
 
-async function ensureOrdersFile(): Promise<void> {
-  const dir = path.dirname(ORDERS_PATH);
+async function ensureOrdersFile(filePath: string): Promise<void> {
+  const dir = path.dirname(filePath);
   await fs.mkdir(dir, { recursive: true });
   try {
-    await fs.access(ORDERS_PATH);
+    await fs.access(filePath);
   } catch {
-    await fs.writeFile(ORDERS_PATH, "[]\n", "utf8");
+    await fs.writeFile(filePath, "[]\n", "utf8");
   }
 }
 
 export async function readZfmOrders(): Promise<ZfmOrder[]> {
-  await ensureOrdersFile();
-  const raw = await fs.readFile(ORDERS_PATH, "utf8");
+  if (isServerlessRuntime()) {
+    try {
+      const store = blobStore();
+      const listed = await store.list();
+      const blobs = listed?.blobs ?? [];
+      const orders: ZfmOrder[] = [];
+      for (const b of blobs) {
+        if (!b?.key || b.key.startsWith("_")) continue;
+        const row = (await store.get(b.key, { type: "json" })) as ZfmOrder | null;
+        if (row?.orderNo) orders.push(row);
+      }
+      orders.sort((a, b) =>
+        String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+      );
+      return orders.slice(0, 500);
+    } catch (e) {
+      console.error("[zfm] blob list failed, falling back to tmp file", e);
+    }
+  }
+
+  const filePath = ordersFilePath();
+  await ensureOrdersFile(filePath);
+  const raw = await fs.readFile(filePath, "utf8");
   try {
     const parsed = JSON.parse(raw) as ZfmOrder[];
     return Array.isArray(parsed) ? parsed : [];
@@ -203,22 +229,42 @@ export async function readZfmOrders(): Promise<ZfmOrder[]> {
 }
 
 export async function writeZfmOrders(orders: ZfmOrder[]): Promise<void> {
-  await ensureOrdersFile();
-  const tmp = `${ORDERS_PATH}.${process.pid}.tmp`;
+  const filePath = ordersFilePath();
+  await ensureOrdersFile(filePath);
+  const tmp = `${filePath}.${process.pid}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(orders, null, 2) + "\n", "utf8");
-  await fs.rename(tmp, ORDERS_PATH);
+  await fs.rename(tmp, filePath);
 }
 
 export async function upsertZfmOrder(order: ZfmOrder): Promise<void> {
+  if (isServerlessRuntime()) {
+    try {
+      const store = blobStore();
+      await store.setJSON(order.orderNo, order);
+      return;
+    } catch (e) {
+      console.error("[zfm] blob set failed, falling back to tmp file", e);
+    }
+  }
+
   const orders = await readZfmOrders();
   const idx = orders.findIndex((o) => o.orderNo === order.orderNo);
   if (idx >= 0) orders[idx] = order;
   else orders.unshift(order);
-  // 保留最近 500 条
   await writeZfmOrders(orders.slice(0, 500));
 }
 
 export async function findZfmOrder(orderNo: string): Promise<ZfmOrder | null> {
+  if (isServerlessRuntime()) {
+    try {
+      const store = blobStore();
+      const row = (await store.get(orderNo, { type: "json" })) as ZfmOrder | null;
+      if (row?.orderNo) return row;
+    } catch (e) {
+      console.error("[zfm] blob get failed, falling back to tmp file", e);
+    }
+  }
+
   const orders = await readZfmOrders();
   return orders.find((o) => o.orderNo === orderNo) ?? null;
 }
