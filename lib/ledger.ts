@@ -81,11 +81,14 @@ function pickProxyUrl(): string {
   );
 }
 
+/** Public Sepolia RPC used for eth_getLogs when Alchemy free tier is too narrow. */
+const DEFAULT_SEPOLIA_LOGS_RPC = "https://ethereum-sepolia-rpc.publicnode.com";
+
 export function getLedgerConfig(): LedgerConfig {
   const chainId = Number(process.env.LEDGER_CHAIN_ID || "11155111");
   const rpcUrl =
     process.env.LEDGER_RPC_URL?.trim() ||
-    "https://ethereum-sepolia-rpc.publicnode.com";
+    DEFAULT_SEPOLIA_LOGS_RPC;
   const contractAddress = process.env.LEDGER_CONTRACT_ADDRESS?.trim() || "";
   const operatorPrivateKey = process.env.LEDGER_OPERATOR_PRIVATE_KEY?.trim() || "";
   const usdtAddress = process.env.LEDGER_USDT_ADDRESS?.trim() || "";
@@ -97,6 +100,22 @@ export function getLedgerConfig(): LedgerConfig {
     usdtAddress,
     proxyUrl: pickProxyUrl(),
   };
+}
+
+/**
+ * Provider URL for eth_getLogs / event history.
+ * Alchemy Free only allows ~10-block eth_getLogs ranges, which makes order-history
+ * scans impractical. Prefer LEDGER_LOGS_RPC_URL, else publicnode when the main
+ * RPC looks like Alchemy, else the main LEDGER_RPC_URL.
+ */
+export function getLedgerLogsRpcUrl(): string {
+  const explicit = process.env.LEDGER_LOGS_RPC_URL?.trim();
+  if (explicit) return explicit;
+  const { rpcUrl } = getLedgerConfig();
+  if (/alchemy\.com/i.test(rpcUrl)) {
+    return DEFAULT_SEPOLIA_LOGS_RPC;
+  }
+  return rpcUrl || DEFAULT_SEPOLIA_LOGS_RPC;
 }
 
 function isSocksProxy(proxyUrl: string): boolean {
@@ -134,8 +153,8 @@ async function getProxyAgent(proxyUrl: string) {
  * Build a JsonRpcProvider. If LEDGER/XYSQ3 proxy is set, route RPC through it
  * (useful when public Sepolia RPC is blocked without Clash).
  */
-export async function getLedgerProvider(): Promise<JsonRpcProvider> {
-  const { rpcUrl, chainId, proxyUrl } = getLedgerConfig();
+async function buildLedgerProvider(rpcUrl: string): Promise<JsonRpcProvider> {
+  const { chainId, proxyUrl } = getLedgerConfig();
   if (!proxyUrl) {
     return new JsonRpcProvider(rpcUrl, chainId);
   }
@@ -144,6 +163,16 @@ export async function getLedgerProvider(): Promise<JsonRpcProvider> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   req.getUrlFunc = FetchRequest.createGetUrlFunc({ agent: agent as any });
   return new JsonRpcProvider(req, chainId);
+}
+
+export async function getLedgerProvider(): Promise<JsonRpcProvider> {
+  const { rpcUrl } = getLedgerConfig();
+  return buildLedgerProvider(rpcUrl);
+}
+
+/** JsonRpcProvider tuned for eth_getLogs (may differ from write/call RPC). */
+export async function getLedgerLogsProvider(): Promise<JsonRpcProvider> {
+  return buildLedgerProvider(getLedgerLogsRpcUrl());
 }
 
 export async function getOperatorWallet(): Promise<Wallet> {
@@ -274,6 +303,9 @@ export function describeLedgerError(error: unknown): string {
   if (/InvalidMembershipLevel/i.test(text)) {
     return "无效的会员档位";
   }
+  if (/eth_getLogs|block range|Free tier plan|query returned more than/i.test(text)) {
+    return "链上日志查询失败（RPC 区块范围受限），请稍后重试或更换 LEDGER_LOGS_RPC_URL";
+  }
   const { proxyUrl } = getLedgerConfig();
   if (
     !proxyUrl &&
@@ -357,7 +389,8 @@ const LEDGER_DEPLOY_TX =
   process.env.LEDGER_DEPLOY_TX?.trim() ||
   "0x6500d15549b2bf70515ea0b8ccacb836457668a47ef878d5f4383a0fe72d0778";
 
-const LOG_CHUNK_SIZE = 8_000;
+/** Initial eth_getLogs window; recursively bisected on RPC range errors. */
+const LOG_CHUNK_SIZE = 2_000;
 const DEFAULT_LOOKBACK_BLOCKS = 150_000;
 const DEFAULT_MAX_EVENTS = 50;
 
@@ -417,6 +450,30 @@ async function resolveLedgerFromBlock(
   return { fromBlock, source: `lookback:${DEFAULT_LOOKBACK_BLOCKS}` };
 }
 
+async function queryFilterRange(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  contract: Contract,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  filter: any,
+  fromBlock: number,
+  toBlock: number,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any[]> {
+  try {
+    return await contract.queryFilter(filter, fromBlock, toBlock);
+  } catch (err) {
+    // Alchemy Free (~10 blocks) and other RPCs reject large eth_getLogs ranges.
+    // Recursively bisect until the window is accepted (or a single block fails).
+    if (toBlock > fromBlock) {
+      const mid = Math.floor((fromBlock + toBlock) / 2);
+      const a = await queryFilterRange(contract, filter, fromBlock, mid);
+      const b = await queryFilterRange(contract, filter, mid + 1, toBlock);
+      return [...a, ...b];
+    }
+    throw err;
+  }
+}
+
 async function queryFilterChunked(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   contract: Contract,
@@ -430,20 +487,8 @@ async function queryFilterChunked(
   let start = fromBlock;
   while (start <= toBlock) {
     const end = Math.min(start + LOG_CHUNK_SIZE - 1, toBlock);
-    try {
-      const chunk = await contract.queryFilter(filter, start, end);
-      out.push(...chunk);
-    } catch (err) {
-      // Some RPCs reject large ranges — retry with half chunk once.
-      if (end > start) {
-        const mid = Math.floor((start + end) / 2);
-        const a = await contract.queryFilter(filter, start, mid);
-        const b = await contract.queryFilter(filter, mid + 1, end);
-        out.push(...a, ...b);
-      } else {
-        throw err;
-      }
-    }
+    const chunk = await queryFilterRange(contract, filter, start, end);
+    out.push(...chunk);
     start = end + 1;
   }
   return out;
@@ -472,8 +517,14 @@ export async function queryUserLedgerEvents(options: {
     options.kinds ?? ["Consumed", "Deposited", "UsdtDepositedToAccount"],
   );
   const userId = toBytes32Id(options.usernameHash);
-  const provider = await getLedgerProvider();
-  const contract = await getLedgerContract(false);
+  // Use logs RPC (publicnode when main RPC is Alchemy Free) — eth_getLogs is the
+  // bottleneck for order history; writes/calls still use LEDGER_RPC_URL.
+  const provider = await getLedgerLogsProvider();
+  const { contractAddress } = getLedgerConfig();
+  if (!contractAddress) {
+    throw new Error("缺少 LEDGER_CONTRACT_ADDRESS");
+  }
+  const contract = new Contract(contractAddress, PLATFORM_LEDGER_ABI, provider);
   const latest = await provider.getBlockNumber();
   const { fromBlock, source } = await resolveLedgerFromBlock(provider, latest);
 
